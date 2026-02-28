@@ -27,10 +27,10 @@ type GenResp struct {
 }
 
 type LexRow struct {
-	Posicion     int    `json:"posicion"`
-	Caracter     string `json:"caracter"`
+	Posicion      int    `json:"posicion"`
+	Caracter      string `json:"caracter"`
 	Identificador string `json:"identificador"`
-	Detalle      string `json:"detalle"`
+	Detalle       string `json:"detalle"`
 }
 
 type LexResp struct {
@@ -52,8 +52,6 @@ var nombresIgnorar = map[string]bool{
 	"J":     true,
 }
 
-// ----------- IMPORTANTE: limpiar apellido para casos como "DE LEÓN", "DEL RÍO", etc. -----------
-// Queremos que: "DE LEÓN" -> "LEON" (para que la inicial sea L, no D)
 func limpiarApellido(apellido string) string {
 	particulas := map[string]bool{
 		"DE":  true,
@@ -77,7 +75,6 @@ func limpiarApellido(apellido string) string {
 		}
 	}
 
-	// Si todo era partícula (raro), regresamos el original normalizado
 	if len(out) == 0 {
 		return apellido
 	}
@@ -85,7 +82,6 @@ func limpiarApellido(apellido string) string {
 	return strings.Join(out, " ")
 }
 
-// Normaliza: mayúsculas, quita acentos, conserva Ñ, y deja solo letras/espacios
 func normalizeName(s string) string {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	repl := strings.NewReplacer(
@@ -151,15 +147,112 @@ func firstInternalConsonant(s string) rune {
 	return 'X'
 }
 
-func validateGen(req GenReq) (GenReq, time.Time, string) {
-	req.Nombre = normalizeName(req.Nombre)
+// --- NUEVO: valida que la fecha sea REAL (incluye bisiestos) ---
+// Ej: 2001-02-29 -> inválida, 2000-02-29 -> válida
+func isValidDateStrict(fechaStr string, t time.Time) bool {
+	return t.Format("2006-01-02") == fechaStr
+}
 
-	// Aquí aplicamos limpiarApellido para que "DE LEÓN" no tome la D
+// --- NUEVO: Validaciones de NOMBRE/APELLIDOS ---
+// 1) No aceptar números ni caracteres (.,-,_,etc). Solo letras y espacios.
+// 2) Mínimo 3 letras (después de limpiar/normalizar).
+// 3) No aceptar "AAA" ni cadenas de 3+ letras todas iguales (ej: "AAAA", "BBBBB").
+func onlyLettersAndSpacesOriginal(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r == ' ' {
+			continue
+		}
+		if unicode.IsLetter(r) {
+			continue
+		}
+		// si es dígito, puntuación, símbolo, etc.
+		return false
+	}
+	return true
+}
+
+func lettersCount(s string) int {
+	n := 0
+	for _, r := range s {
+		if unicode.IsLetter(r) {
+			n++
+		}
+	}
+	return n
+}
+
+func allLettersSame(s string) bool {
+	var first rune
+	set := false
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		if !set {
+			first = r
+			set = true
+			continue
+		}
+		if r != first {
+			return false
+		}
+	}
+	return set // true si hubo letras y todas eran iguales
+}
+
+func validateNameFieldOriginal(label, raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return fmt.Sprintf("Faltan datos: %s es obligatorio.", label)
+	}
+	if !onlyLettersAndSpacesOriginal(raw) {
+		return fmt.Sprintf("%s inválido: no se permiten números ni caracteres especiales (solo letras y espacios).", label)
+	}
+	return ""
+}
+
+func validateNameFieldNormalized(label, normalized string) string {
+	if lettersCount(normalized) < 3 {
+		return fmt.Sprintf("%s inválido: debe tener mínimo 3 letras.", label)
+	}
+	// "AAA" y similares (3+ letras iguales) no permitidos
+	if allLettersSame(normalized) && lettersCount(normalized) >= 3 {
+		return fmt.Sprintf("%s inválido: no se permite usar 'AAA' (o letras repetidas).", label)
+	}
+	return ""
+}
+
+func validateGen(req GenReq) (GenReq, time.Time, string) {
+	// --- NUEVO: validar RAW antes de normalizar (para detectar 1ANDERSON, .ANDERSON, etc.) ---
+	if msg := validateNameFieldOriginal("Nombre", req.Nombre); msg != "" {
+		return req, time.Time{}, msg
+	}
+	if msg := validateNameFieldOriginal("Apellido paterno", req.Paterno); msg != "" {
+		return req, time.Time{}, msg
+	}
+	if msg := validateNameFieldOriginal("Apellido materno", req.Materno); msg != "" {
+		return req, time.Time{}, msg
+	}
+
+	req.Nombre = normalizeName(req.Nombre)
 	req.Paterno = limpiarApellido(req.Paterno)
 	req.Materno = limpiarApellido(req.Materno)
-
 	req.Sexo = strings.ToUpper(strings.TrimSpace(req.Sexo))
 	req.Estado = strings.ToUpper(strings.TrimSpace(req.Estado))
+
+	// --- NUEVO: validar ya normalizado/limpio (mínimo 3 letras y no AAA) ---
+	if msg := validateNameFieldNormalized("Nombre", req.Nombre); msg != "" {
+		return req, time.Time{}, msg
+	}
+	if msg := validateNameFieldNormalized("Apellido paterno", req.Paterno); msg != "" {
+		return req, time.Time{}, msg
+	}
+	if msg := validateNameFieldNormalized("Apellido materno", req.Materno); msg != "" {
+		return req, time.Time{}, msg
+	}
 
 	if req.Paterno == "" || req.Materno == "" || req.Nombre == "" {
 		return req, time.Time{}, "Faltan datos: Nombre, Apellido paterno y materno son obligatorios."
@@ -180,17 +273,32 @@ func validateGen(req GenReq) (GenReq, time.Time, string) {
 		return req, time.Time{}, "Fecha inválida."
 	}
 
+	// --- NUEVO: valida bisiestos/fecha real ---
+	if !isValidDateStrict(req.Fecha, t) {
+		return req, time.Time{}, "Fecha inválida (revisa mes/día y años bisiestos)."
+	}
+
+	// --- NUEVO: no permitir fechas de nacimiento de hace más de 110 años ---
+	hoy := time.Now()
+	hoy = time.Date(hoy.Year(), hoy.Month(), hoy.Day(), 0, 0, 0, 0, hoy.Location())
+
+	limite := hoy.AddDate(-110, 0, 0)
+	if t.Before(limite) {
+		return req, time.Time{}, "Fecha inválida: no se permiten fechas de nacimiento mayores a 110 años."
+	}
+	if t.After(hoy) {
+		return req, time.Time{}, "Fecha inválida: no se permiten fechas futuras."
+	}
+
 	return req, t, ""
 }
 
-// CURP (18): 4 + 6 + 1 + 2 + 3 + 2
-// Nota: homoclave simplificada "00" (para cumplir estructura).
 func generarCURP(req GenReq, fecha time.Time) string {
 	nom := pickNombre(req.Nombre)
 
 	p1 := firstLetter(req.Paterno)
 	v1 := firstInternalVowel(req.Paterno)
-	m1 := firstLetter(req.Materno) // aquí ya no será D si el materno fue "DE LEÓN"
+	m1 := firstLetter(req.Materno)
 	n1 := firstLetter(nom)
 
 	yy := fmt.Sprintf("%02d", fecha.Year()%100)
@@ -267,159 +375,9 @@ func validateCurpChars(curp string) string {
 	return ""
 }
 
-var page = template.Must(template.New("p").Parse(`
-<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Analizador Sintáctico y Léxico CURP (Go)</title>
-<style>
-body{font-family:Arial;margin:20px;max-width:1200px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.card{border:1px solid #ddd;border-radius:12px;padding:16px}
-.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-label{font-weight:700;display:block;margin-bottom:6px}
-input,select{width:100%;padding:10px;border:1px solid #bbb;border-radius:8px;font-size:15px}
-button{margin-top:12px;padding:10px 14px;border:0;border-radius:8px;cursor:pointer}
-table{border-collapse:collapse;width:100%;margin-top:12px}
-th,td{border:1px solid #999;padding:10px;text-align:left;vertical-align:top}
-th{background:#f2f2f2}
-.ok{color:#0a7a2f;font-weight:800}
-.err{color:#b00020;font-weight:800}
-code{font-size:16px}
-small{color:#444}
-h2{margin-top:0}
-</style>
-</head>
-<body>
-<h1>CURP: Analizador Sintáctico (genera) + Analizador Léxico (explica)</h1>
-<p><small>Estados permitidos por tu profe: DG (Durango) y JC (Jalisco)</small></p>
-<p><small>Apellidos con partículas: DE, DEL, LA, LAS, LOS, MC, MAC, VAN, VON se ignoran para tomar la inicial (ej: "DE LEÓN" -> "LEON").</small></p>
-
-<div class="grid">
-  <div class="card">
-    <h2>1) Analizador Sintáctico (Generar CURP)</h2>
-
-    <div class="row">
-      <div>
-        <label>Apellido paterno</label>
-        <input id="paterno" placeholder="Ej: VELASCO">
-      </div>
-      <div>
-        <label>Apellido materno</label>
-        <input id="materno" placeholder="Ej: DE LEÓN">
-      </div>
-      <div>
-        <label>Nombre(s)</label>
-        <input id="nombre" placeholder="Ej: ANDERSON">
-      </div>
-      <div>
-        <label>Fecha de nacimiento</label>
-        <input id="fecha" type="date">
-      </div>
-      <div>
-        <label>Sexo</label>
-        <select id="sexo">
-          <option value="H">H</option>
-          <option value="M">M</option>
-        </select>
-      </div>
-      <div>
-        <label>Estado</label>
-        <select id="estado">
-          <option value="DG">DG - Durango</option>
-          <option value="JC">JC - Jalisco</option>
-        </select>
-      </div>
-    </div>
-
-    <button id="btnGen">Generar CURP</button>
-    <div id="msgGen" style="margin-top:12px"></div>
-    <div id="curpBox" style="margin-top:10px"></div>
-  </div>
-
-  <div class="card">
-    <h2>2) Analizador Léxico (Tokens de la CURP)</h2>
-    <div id="msgLex"></div>
-    <div id="lexOut"></div>
-  </div>
-</div>
-
-<script>
-async function generar(){
-  const payload = {
-    paterno: document.getElementById("paterno").value,
-    materno: document.getElementById("materno").value,
-    nombre: document.getElementById("nombre").value,
-    fecha: document.getElementById("fecha").value,
-    sexo: document.getElementById("sexo").value,
-    estado: document.getElementById("estado").value
-  };
-
-  const msgGen = document.getElementById("msgGen");
-  const curpBox = document.getElementById("curpBox");
-  const msgLex = document.getElementById("msgLex");
-  const lexOut = document.getElementById("lexOut");
-
-  msgGen.innerHTML = "";
-  curpBox.innerHTML = "";
-  msgLex.innerHTML = "";
-  lexOut.innerHTML = "";
-
-  const res = await fetch("/api/generar", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify(payload)
-  });
-
-  const data = await res.json();
-  if(!data.ok){
-    msgGen.innerHTML = '<div class="err">' + data.error + '</div>';
-    return;
-  }
-
-  msgGen.innerHTML = '<div class="ok">CURP generada correctamente</div>';
-  curpBox.innerHTML = '<p><b>CURP:</b> <code>' + data.curp + '</code></p>';
-
-  await lexical(data.curp);
-}
-
-async function lexical(curp){
-  const msgLex = document.getElementById("msgLex");
-  const lexOut = document.getElementById("lexOut");
-  msgLex.innerHTML = "";
-  lexOut.innerHTML = "";
-
-  const res = await fetch("/api/lexico", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({curp})
-  });
-
-  const data = await res.json();
-  if(!data.ok){
-    msgLex.innerHTML = '<div class="err">' + data.error + '</div>';
-    return;
-  }
-
-  msgLex.innerHTML = '<div class="ok">Tokens identificados</div>';
-
-  let html = '<table><tr><th>Posición</th><th>Carácter</th><th>Identificador</th><th>Detalle</th></tr>';
-  for(const t of data.tokens){
-    html += '<tr><td>' + t.posicion + '</td><td><code>' + t.caracter + '</code></td><td>' + t.identificador + '</td><td>' + t.detalle + '</td></tr>';
-  }
-  html += '</table>';
-  lexOut.innerHTML = html;
-}
-
-document.getElementById("btnGen").addEventListener("click", generar);
-</script>
-</body>
-</html>
-`))
-
 func main() {
+	page := template.Must(template.ParseFiles("templates/index.html"))
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_ = page.Execute(w, nil)
 	})

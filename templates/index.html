@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CURP | Analizador Sintáctico y Léxico (Go)</title>
+
+<style>
+:root{
+  --bg:#0b1220;
+  --panel:#0f1a30;
+  --card:#101c33;
+  --muted:#9fb0d0;
+  --text:#e8eefc;
+  --line:rgba(255,255,255,.10);
+  --accent:#6ea8fe;
+  --accent2:#22c55e;
+  --danger:#ef4444;
+  --shadow: 0 10px 35px rgba(0,0,0,.35);
+  --radius:16px;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+  background: radial-gradient(1200px 800px at 10% 10%, #1b2b55 0%, var(--bg) 45%, #070b14 100%);
+  color:var(--text);
+}
+
+.container{
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 26px 18px 40px;
+}
+
+.header{
+  display:flex;
+  gap:16px;
+  justify-content:space-between;
+  align-items:flex-end;
+  flex-wrap:wrap;
+  margin-bottom: 18px;
+}
+h1{
+  margin:0;
+  font-size: clamp(22px, 3vw, 34px);
+  letter-spacing:.2px;
+}
+.sub{
+  color:var(--muted);
+  margin:6px 0 0;
+  max-width: 780px;
+  line-height: 1.4;
+}
+
+.badges{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.badge{
+  border:1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  padding:8px 10px;
+  border-radius:999px;
+  font-size:13px;
+  color:var(--muted);
+}
+
+.grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.card{
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  border:1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow:hidden;
+}
+
+.card-head{
+  padding:16px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.card-title{
+  margin:0;
+  font-size: 18px;
+}
+.card-note{
+  margin:0;
+  color:var(--muted);
+  font-size: 13px;
+}
+
+.card-body{
+  padding:16px;
+}
+
+.form-grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.field label{
+  display:block;
+  font-weight:700;
+  font-size: 13px;
+  margin-bottom:6px;
+  color:#d7e1ff;
+}
+.field input, .field select{
+  width:100%;
+  padding:11px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(10,16,30,.55);
+  color:var(--text);
+  outline:none;
+  font-size: 15px;
+}
+.field input:focus, .field select:focus{
+  border-color: rgba(110,168,254,.9);
+  box-shadow: 0 0 0 4px rgba(110,168,254,.15);
+}
+
+.actions{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  margin-top: 12px;
+  flex-wrap:wrap;
+}
+.btn{
+  border:0;
+  padding: 11px 14px;
+  border-radius: 12px;
+  cursor:pointer;
+  font-weight:800;
+  font-size: 14px;
+  transition: transform .05s ease, filter .15s ease, background .2s ease;
+}
+.btn:active{ transform: translateY(1px); }
+
+.btn-primary{
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  color:#071020;
+}
+.btn-primary:hover{ filter: brightness(1.06); }
+
+.msg{
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.04);
+}
+.ok{ color: #bbf7d0; font-weight:900; }
+.err{ color: #fecaca; font-weight:900; }
+
+.curp-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(34,197,94,.35);
+  background: rgba(34,197,94,.10);
+}
+.curp-pill code{
+  font-size: 18px;
+  letter-spacing: 1px;
+  font-weight: 900;
+  color:#dcfce7;
+}
+.copy{
+  background: rgba(255,255,255,.08);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor:pointer;
+  font-weight:800;
+}
+.copy:hover{ background: rgba(255,255,255,.12); }
+
+.table-wrap{
+  margin-top: 12px;
+  overflow:auto;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+}
+table{
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 720px;
+  background: rgba(10,16,30,.25);
+}
+thead th{
+  position: sticky;
+  top: 0;
+  background: rgba(15,26,48,.95);
+  backdrop-filter: blur(6px);
+  text-align:left;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color:#d7e1ff;
+}
+tbody td{
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  color: #eaf0ff;
+}
+tbody tr:nth-child(odd){
+  background: rgba(255,255,255,.03);
+}
+td code{
+  background: rgba(255,255,255,.08);
+  padding: 3px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.footer{
+  margin-top: 14px;
+  color:var(--muted);
+  font-size: 13px;
+  line-height:1.4;
+}
+
+@media (max-width: 950px){
+  .grid{ grid-template-columns: 1fr; }
+  .form-grid{ grid-template-columns: 1fr; }
+  table{ min-width: 650px; }
+}
+</style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>CURP: Analizador Sintáctico + Léxico (Go)</h1>
+        <p class="sub">
+          Captura los campos, genera la CURP y luego se descompone en tokens (fecha, sexo, estado, consonantes y homoclave).
+        </p>
+      </div>
+      <div class="badges">
+        <span class="badge">Estados permitidos: DG (Durango) y JC (Jalisco)</span>
+        <span class="badge">Partículas ignoradas: DE, DEL, LA, LAS, LOS, MC, MAC, VAN, VON</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">1) Analizador Sintáctico (Generar CURP)</h2>
+            <p class="card-note">Ingresa los datos y el servidor generará la CURP automáticamente.</p>
+          </div>
+        </div>
+        <div class="card-body">
+
+          <div class="form-grid">
+            <div class="field">
+              <label>Apellido paterno</label>
+              <input id="paterno" placeholder="Ej: GUTIERREZ">
+            </div>
+
+            <div class="field">
+              <label>Apellido materno</label>
+              <input id="materno" placeholder="Ej: DE LEÓN">
+            </div>
+
+            <div class="field">
+              <label>Nombre(s)</label>
+              <input id="nombre" placeholder="Ej: LUIS JOSE">
+            </div>
+
+            <div class="field">
+              <label>Fecha de nacimiento</label>
+              <input id="fecha" type="date">
+            </div>
+
+            <div class="field">
+              <label>Sexo</label>
+              <select id="sexo">
+                <option value="H">H</option>
+                <option value="M">M</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Estado</label>
+              <select id="estado">
+                <option value="DG">DG - Durango</option>
+                <option value="JC">JC - Jalisco</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-primary" id="btnGen">Generar CURP</button>
+          </div>
+
+          <div id="msgGen"></div>
+          <div id="curpBox"></div>
+
+          <div class="footer">
+            Tip: si tu apellido es “DE LEÓN”, el sistema ignora “DE” para que la inicial sea “L”.
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">2) Analizador Léxico (Tokens de la CURP)</h2>
+            <p class="card-note">Se muestra cada posición y lo que significa en la CURP.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div id="msgLex"></div>
+          <div id="lexOut"></div>
+
+          <div class="footer">
+            Nota: aquí se valida que el estado en la CURP sea DG o JC.
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script>
+async function generar(){
+  const payload = {
+    paterno: document.getElementById("paterno").value,
+    materno: document.getElementById("materno").value,
+    nombre: document.getElementById("nombre").value,
+    fecha: document.getElementById("fecha").value,
+    sexo: document.getElementById("sexo").value,
+    estado: document.getElementById("estado").value
+  };
+
+  const msgGen = document.getElementById("msgGen");
+  const curpBox = document.getElementById("curpBox");
+  const msgLex = document.getElementById("msgLex");
+  const lexOut = document.getElementById("lexOut");
+
+  msgGen.innerHTML = "";
+  curpBox.innerHTML = "";
+  msgLex.innerHTML = "";
+  lexOut.innerHTML = "";
+
+  const res = await fetch("/api/generar", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  if(!data.ok){
+    msgGen.innerHTML = '<div class="msg err">' + data.error + '</div>';
+    return;
+  }
+
+  msgGen.innerHTML = '<div class="msg ok">CURP generada correctamente</div>';
+  curpBox.innerHTML = `
+    <div class="curp-pill">
+      <div><b>CURP:</b> <code id="curpText">${data.curp}</code></div>
+      <button class="copy" id="btnCopy">Copiar</button>
+    </div>
+  `;
+
+  document.getElementById("btnCopy").addEventListener("click", async () => {
+    try{
+      await navigator.clipboard.writeText(data.curp);
+      document.getElementById("btnCopy").textContent = "Copiado";
+      setTimeout(()=>document.getElementById("btnCopy").textContent="Copiar", 1100);
+    }catch(e){
+      alert("No se pudo copiar. Copia manualmente la CURP.");
+    }
+  });
+
+  await lexical(data.curp);
+}
+
+async function lexical(curp){
+  const msgLex = document.getElementById("msgLex");
+  const lexOut = document.getElementById("lexOut");
+  msgLex.innerHTML = "";
+  lexOut.innerHTML = "";
+
+  const res = await fetch("/api/lexico", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({curp})
+  });
+
+  const data = await res.json();
+  if(!data.ok){
+    msgLex.innerHTML = '<div class="msg err">' + data.error + '</div>';
+    return;
+  }
+
+  msgLex.innerHTML = '<div class="msg ok">Tokens identificados</div>';
+
+  let html = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Posición</th>
+            <th>Carácter</th>
+            <th>Identificador</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+  for(const t of data.tokens){
+    html += `
+      <tr>
+        <td>${t.posicion}</td>
+        <td><code>${t.caracter}</code></td>
+        <td>${t.identificador}</td>
+        <td>${t.detalle}</td>
+      </tr>
+    `;
+  }
+
+  html += `</tbody></table></div>`;
+  lexOut.innerHTML = html;
+}
+
+document.getElementById("btnGen").addEventListener("click", generar);
+</script>
+</body>
+</html>
